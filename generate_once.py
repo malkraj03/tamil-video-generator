@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 def generate_video(duration: int = 300, resolution: str = "1280x720",
                    fps: int = 24, skip_upload: bool = False,
-                   voice: str = "male_in") -> dict:
+                   voice: str = "female_in") -> dict:
     """
     Complete pipeline: generate content -> TTS audio -> create video -> upload to YouTube
 
@@ -187,10 +187,10 @@ def main():
                         help='Frames per second (default: 24)')
     parser.add_argument('--skip-upload', action='store_true',
                         help='Skip YouTube upload')
-    parser.add_argument('--voice', default='male_in',
+    parser.add_argument('--voice', default='female_in',
                         choices=['male_in', 'female_in', 'male_lk', 'female_lk',
                                  'male_my', 'female_my', 'male_sg', 'female_sg'],
-                        help='TTS voice (default: male_in = Indian Tamil Male)')
+                        help='TTS voice (default: female_in = Indian Tamil Female)')
 
     args = parser.parse_args()
 

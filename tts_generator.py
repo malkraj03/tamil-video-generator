@@ -69,7 +69,7 @@ class TamilTTSGenerator:
             raise
 
     def generate_script_audio(self, script: str, filename: str,
-                               rate: str = "-5%") -> str:
+                               rate: str = "+0%") -> str:
         """
         Generate audio from complete script.
         Breaks script into paragraphs for better quality.

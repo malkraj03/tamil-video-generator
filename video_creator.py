@@ -8,6 +8,7 @@ import os
 import logging
 import math
 import random
+import hashlib
 from typing import List, Dict, Tuple
 from pathlib import Path
 from datetime import datetime
@@ -193,6 +194,15 @@ class VideoCreator:
                 style = idx % 3  # rotate through styles
                 item_theme = COLOR_THEMES[(COLOR_THEMES.index(theme) + idx) % len(COLOR_THEMES)]
 
+                # Storytelling scene position for this segment
+                total_items = len(content_items)
+                if idx == 0:
+                    item['_story_scene'] = 'opening scene of a'
+                elif idx == total_items - 1:
+                    item['_story_scene'] = 'final scene of a'
+                else:
+                    item['_story_scene'] = f'middle scene {idx} of a'
+
                 if style == 0:
                     clip = self._create_title_content_clip(item, item_theme, clip_duration)
                 elif style == 1:
@@ -244,7 +254,7 @@ class VideoCreator:
 
     def _create_title_content_clip(self, item: Dict, theme: dict, duration: float):
         """Create clip with title at top and content below"""
-        image = self._get_background_image(theme, item.get('_category', ''))
+        image = self._get_background_image(theme, item)
         draw = ImageDraw.Draw(image)
 
         font_title = find_font(65)
@@ -288,7 +298,7 @@ class VideoCreator:
 
     def _create_full_text_clip(self, item: Dict, theme: dict, duration: float):
         """Create clip with content text centered on dark background"""
-        image = self._get_background_image(theme, item.get('_category', ''), darker=True)
+        image = self._get_background_image(theme, item, darker=True)
         draw = ImageDraw.Draw(image)
 
         font_title = find_font(55)
@@ -319,7 +329,7 @@ class VideoCreator:
 
     def _create_gradient_text_clip(self, item: Dict, theme: dict, duration: float):
         """Create clip with radial gradient or cartoon image and text"""
-        image = self._get_background_image(theme, item.get('_category', ''), radial=True)
+        image = self._get_background_image(theme, item, radial=True)
         draw = ImageDraw.Draw(image)
 
         font_title = find_font(70)
@@ -374,38 +384,40 @@ class VideoCreator:
 
         return self._image_to_clip(image, duration, fade=True)
 
-    def _get_category_image(self, category: str) -> Image.Image | None:
-        """Fetch or load a cartoon-style image for a content category"""
-        prompt = CARTOON_PROMPTS.get(category)
-        if not prompt:
+    def _get_story_image(self, item: Dict) -> Image.Image | None:
+        """Fetch or load a cartoon-style story image for a content segment"""
+        category = item.get('_category', '')
+        base_prompt = CARTOON_PROMPTS.get(category)
+        if not base_prompt:
             return None
-        cache_path = self.image_dir / f"{category}.png"
+        scene = item.get('_story_scene', '')
+        title = item.get('title', '')
+        prompt = f"{scene} {base_prompt}".strip() if scene else base_prompt
+        item_hash = hashlib.md5(f"{category}_{title}".encode('utf-8')).hexdigest()[:12]
+        cache_path = self.image_dir / f"{category}_{item_hash}.png"
         try:
-            if category in self._category_images:
-                return self._category_images[category].copy()
             if cache_path.exists():
                 img = Image.open(cache_path).convert('RGB')
-                self._category_images[category] = img
                 return img.copy()
             encoded = urllib.parse.quote(prompt)
-            url = f"https://image.pollinations.ai/prompt/{encoded}?width={self.width}&height={self.height}&nologo=true"
-            logger.info(f"Generating cartoon image for '{category}'...")
+            seed = int(item_hash[:8], 16) % 100000
+            url = f"https://image.pollinations.ai/prompt/{encoded}?width={self.width}&height={self.height}&nologo=true&seed={seed}"
+            logger.info(f"Generating story image for '{category}' ({scene})...")
             response = requests.get(url, timeout=60)
             response.raise_for_status()
             img = Image.open(BytesIO(response.content)).convert('RGB')
             if img.size != self.resolution:
                 img = img.resize(self.resolution, Image.Resampling.LANCZOS)
             img.save(cache_path)
-            self._category_images[category] = img
             return img.copy()
         except Exception as e:
-            logger.warning(f"Could not load image for '{category}': {e}")
+            logger.warning(f"Could not load story image for '{category}': {e}")
             return None
 
-    def _get_background_image(self, theme: dict, category: str,
+    def _get_background_image(self, theme: dict, item: Dict,
                                darker: bool = False, radial: bool = False) -> Image.Image:
-        """Return a cartoon image background or a gradient fallback"""
-        img = self._get_category_image(category)
+        """Return a cartoon story image background or a gradient fallback"""
+        img = self._get_story_image(item)
         if img:
             brightness = 0.35 if darker else 0.45
             return ImageEnhance.Brightness(img).enhance(brightness)
