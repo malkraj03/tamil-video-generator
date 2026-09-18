@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  tamil-video-generator:
+    build: .
+    container_name: tamil-video-generator
+    volumes:
+      - ./audio_output:/app/audio_output
+      - ./videos:/app/videos
+      - ./logs:/app/logs
+      - ./videos.db:/app/videos.db
+      - ./credentials.json:/app/credentials.json:ro
+    environment:
+      - LOG_LEVEL=INFO
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

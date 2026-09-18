@@ -1,0 +1,20 @@
+{
+  "audio_dir": "audio_output",
+  "video_dir": "videos",
+  "database_path": "videos.db",
+  "youtube_credentials": "credentials.json",
+  "video_resolution": "1920x1080",
+  "video_fps": 30,
+  "video_duration_min": 15,
+  "video_duration_max": 20,
+  "schedule_times": [
+    "08:00",
+    "20:00"
+  ],
+  "timezone": "Asia/Kolkata",
+  "log_level": "INFO",
+  "log_file": "video_generator.log",
+  "cleanup_old_videos_days": 30,
+  "max_retries": 3,
+  "retry_delay_seconds": 60
+}
