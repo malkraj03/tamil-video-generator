@@ -16,7 +16,10 @@ from moviepy.editor import (
     ImageClip, CompositeVideoClip,
     concatenate_videoclips, ColorClip, AudioFileClip,
 )
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageEnhance
+import requests
+from io import BytesIO
+import urllib.parse
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -54,6 +57,21 @@ COLOR_THEMES = [
 ]
 
 
+# Free AI image prompts for cartoon-style backgrounds per category
+CARTOON_PROMPTS = {
+    "history": "colorful cartoon illustration of ancient Tamil Chola and Pandya kingdoms, animated story scene, vibrant colors, high quality",
+    "mythology": "colorful cartoon illustration of South Indian temple festival and divine legends, animated mythology scene, bright colors",
+    "science": "cartoon illustration of ancient Tamil scholars studying astronomy and mathematics, bright creative scene",
+    "culture": "vibrant cartoon illustration of Tamil classical dance and music festival, colorful cultural scene",
+    "lifestyle": "cartoon illustration of healthy South Indian yoga and wellness lifestyle, warm colors",
+    "nature": "cartoon illustration of Tamil Nadu hills, forests and waterfalls, vibrant nature scene",
+    "inventions": "cartoon illustration of ancient Tamil language and inventions, creative colorful scene",
+    "famous_people": "cartoon illustration of inspiring Tamil leaders and celebrities, colorful portrait style scene",
+    "festivals": "cartoon illustration of Tamil Pongal and festival celebration, bright festive colors",
+    "food": "cartoon illustration of delicious South Indian Tamil food dishes, colorful food art",
+}
+
+
 def find_font(size: int = 40) -> ImageFont.FreeTypeFont:
     """Find an available font on this system"""
     for font_path in FONT_SEARCH_PATHS:
@@ -83,10 +101,13 @@ class VideoCreator:
                  resolution: Tuple[int, int] = (1920, 1080), fps: int = 30):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
+        self.image_dir = Path("images")
+        self.image_dir.mkdir(exist_ok=True)
         self.resolution = resolution
         self.fps = fps
         self.width, self.height = resolution
         self.temp_files = []  # track temp files for cleanup
+        self._category_images = {}
 
     def create_video(self, content: Dict, audio_path: str, title: str) -> str:
         """
@@ -223,7 +244,7 @@ class VideoCreator:
 
     def _create_title_content_clip(self, item: Dict, theme: dict, duration: float):
         """Create clip with title at top and content below"""
-        image = self._create_gradient_background(theme['bg_start'], theme['bg_end'])
+        image = self._get_background_image(theme, item.get('_category', ''))
         draw = ImageDraw.Draw(image)
 
         font_title = find_font(65)
@@ -267,10 +288,7 @@ class VideoCreator:
 
     def _create_full_text_clip(self, item: Dict, theme: dict, duration: float):
         """Create clip with content text centered on dark background"""
-        # Use darker variant
-        bg_start = tuple(max(0, c - 15) for c in theme['bg_start'])
-        bg_end = tuple(max(0, c - 15) for c in theme['bg_end'])
-        image = self._create_gradient_background(bg_start, bg_end)
+        image = self._get_background_image(theme, item.get('_category', ''), darker=True)
         draw = ImageDraw.Draw(image)
 
         font_title = find_font(55)
@@ -300,8 +318,8 @@ class VideoCreator:
         return self._image_to_clip(image, duration, fade=True)
 
     def _create_gradient_text_clip(self, item: Dict, theme: dict, duration: float):
-        """Create clip with radial gradient and text"""
-        image = self._create_radial_gradient(theme['bg_start'], theme['bg_end'])
+        """Create clip with radial gradient or cartoon image and text"""
+        image = self._get_background_image(theme, item.get('_category', ''), radial=True)
         draw = ImageDraw.Draw(image)
 
         font_title = find_font(70)
@@ -355,6 +373,49 @@ class VideoCreator:
                                  self.height // 2 + 100, font_small, theme['accent'])
 
         return self._image_to_clip(image, duration, fade=True)
+
+    def _get_category_image(self, category: str) -> Image.Image | None:
+        """Fetch or load a cartoon-style image for a content category"""
+        prompt = CARTOON_PROMPTS.get(category)
+        if not prompt:
+            return None
+        cache_path = self.image_dir / f"{category}.png"
+        try:
+            if category in self._category_images:
+                return self._category_images[category].copy()
+            if cache_path.exists():
+                img = Image.open(cache_path).convert('RGB')
+                self._category_images[category] = img
+                return img.copy()
+            encoded = urllib.parse.quote(prompt)
+            url = f"https://image.pollinations.ai/prompt/{encoded}?width={self.width}&height={self.height}&nologo=true"
+            logger.info(f"Generating cartoon image for '{category}'...")
+            response = requests.get(url, timeout=60)
+            response.raise_for_status()
+            img = Image.open(BytesIO(response.content)).convert('RGB')
+            if img.size != self.resolution:
+                img = img.resize(self.resolution, Image.Resampling.LANCZOS)
+            img.save(cache_path)
+            self._category_images[category] = img
+            return img.copy()
+        except Exception as e:
+            logger.warning(f"Could not load image for '{category}': {e}")
+            return None
+
+    def _get_background_image(self, theme: dict, category: str,
+                               darker: bool = False, radial: bool = False) -> Image.Image:
+        """Return a cartoon image background or a gradient fallback"""
+        img = self._get_category_image(category)
+        if img:
+            brightness = 0.35 if darker else 0.45
+            return ImageEnhance.Brightness(img).enhance(brightness)
+        if radial:
+            return self._create_radial_gradient(theme['bg_start'], theme['bg_end'])
+        if darker:
+            bg_start = tuple(max(0, c - 15) for c in theme['bg_start'])
+            bg_end = tuple(max(0, c - 15) for c in theme['bg_end'])
+            return self._create_gradient_background(bg_start, bg_end)
+        return self._create_gradient_background(theme['bg_start'], theme['bg_end'])
 
     # ---- Helper methods ----
 

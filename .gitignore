@@ -41,6 +41,7 @@ token.pickle
 *.log
 audio_output/
 videos/
+images/
 temp/
 *.mp4
 *.wav

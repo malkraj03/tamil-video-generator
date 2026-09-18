@@ -112,9 +112,16 @@ class TamilContentGenerator:
         categories_used = list(set(item.get('_category', 'general') for item in selected_content))
         primary_category = categories_used[0] if categories_used else 'general'
 
-        # Create title
+        # Create English YouTube title for broader reach; keep date for uniqueness
         date_str = datetime.now().strftime('%d-%m-%Y')
-        title = f"தமிழ் வரலாறு மற்றும் சுவையான உண்மைகள் - {date_str}"
+        category_display = primary_category.replace('_', ' ').title()
+        title_templates = [
+            "Incredible Tamil {category} Facts You Must Know!",
+            "Amazing Tamil {category} Stories That Will Surprise You",
+            "Top Tamil {category} Secrets Revealed",
+            "Fascinating Tamil {category} You Never Knew"
+        ]
+        title = f"{random.choice(title_templates).format(category=category_display)} | {date_str}"
 
         # Create script
         script = self._create_script(selected_content)
@@ -131,8 +138,14 @@ class TamilContentGenerator:
         }
 
     def _create_script(self, content_list: List[Dict]) -> str:
-        """Create a complete script from content"""
-        script = "வணக்கம் நண்பர்களே! இந்த வீடியோவில் நாம் தமிழ் வரலாறு மற்றும் சுவையான உண்மைகளைப் பற்றி பேசப் போகிறோம்.\n\n"
+        """Create an engaging script from content"""
+        intro_lines = [
+            "வணக்கம் நண்பர்களே! இந்த வீடியோவில் சுவாரஸ்யமான தமிழ் கதைகளையும் அதிசயங்களையும் கண்டுபிடிக்கலாம்!",
+            "எல்லோருக்கும் வணக்கம்! தமிழ் வரலாற்றின் மற்றும் பண்பாட்டின் அற்புதமான பக்கங்களை இன்று பார்க்கப் போகிறோம்!",
+            "வணக்கம்! தமிழர்களின் பெருமையையும் சுவாரஸ்யமான உண்மைகளையும் இந்த வீடியோவில் காணலாம்!"
+        ]
+
+        script = random.choice(intro_lines) + "\n\n"
 
         for idx, content in enumerate(content_list, 1):
             script += f"{idx}. {content['title']}\n"
