@@ -16,7 +16,8 @@ from google import genai
 from google.genai import errors as genai_errors
 
 from config import (
-    GEMINI_API_KEY, GEMINI_MODEL, CONTENT_CATEGORIES, USED_TOPICS_FILE
+    GEMINI_API_KEY, GEMINI_MODEL, GEMINI_FALLBACK_MODELS,
+    CONTENT_CATEGORIES, USED_TOPICS_FILE
 )
 
 logger = logging.getLogger(__name__)
@@ -55,23 +56,49 @@ def _is_retryable(exc: Exception) -> bool:
 
 
 def _generate_with_retry(client, model_name: str, prompt: str,
-                         max_attempts: int = 6, base_delay: float = 5.0) -> str:
-    """Call generate_content with exponential backoff for transient errors."""
+                         max_attempts: int = 6, base_delay: float = 5.0,
+                         fallback_models=None) -> str:
+    """Call generate_content with exponential backoff for transient errors.
+
+    If `fallback_models` is provided, each model is tried in order with its own
+    retry loop. A model that returns 404 (permanently unavailable) is skipped
+    without retries; transient errors (429/5xx) are retried with backoff before
+    moving to the next fallback.
+    """
+    models_to_try = [model_name] + (fallback_models or [])
     last_exc = None
-    for attempt in range(1, max_attempts + 1):
-        try:
-            resp = client.models.generate_content(model=model_name, contents=prompt)
-            return resp.text
-        except Exception as exc:
-            last_exc = exc
-            if not _is_retryable(exc) or attempt == max_attempts:
-                raise
-            delay = base_delay * (2 ** (attempt - 1)) + random.uniform(0, 1.5)
-            logger.warning(
-                f"Gemini transient error (attempt {attempt}/{max_attempts}): "
-                f"{exc}. Retrying in {delay:.1f}s..."
-            )
-            time.sleep(delay)
+    for model_idx, mname in enumerate(models_to_try):
+        for attempt in range(1, max_attempts + 1):
+            try:
+                resp = client.models.generate_content(model=mname, contents=prompt)
+                if model_idx > 0:
+                    logger.info(f"Success using fallback model: {mname}")
+                return resp.text
+            except Exception as exc:
+                last_exc = exc
+                # 404 = model doesn't exist; skip to next fallback immediately
+                status = getattr(exc, "status", None)
+                try:
+                    code = int(status) if status is not None else None
+                except (TypeError, ValueError):
+                    code = None
+                if code == 404:
+                    logger.info(f"Model {mname} not available (404), trying next fallback...")
+                    break
+                if not _is_retryable(exc) or attempt == max_attempts:
+                    if model_idx < len(models_to_try) - 1:
+                        logger.warning(
+                            f"Model {mname} failed after {attempt} attempts: {exc}. "
+                            f"Trying next fallback model..."
+                        )
+                        break
+                    raise
+                delay = base_delay * (2 ** (attempt - 1)) + random.uniform(0, 1.5)
+                logger.warning(
+                    f"Gemini transient error on {mname} (attempt {attempt}/{max_attempts}): "
+                    f"{exc}. Retrying in {delay:.1f}s..."
+                )
+                time.sleep(delay)
     raise last_exc  # pragma: no cover
 
 
@@ -83,6 +110,8 @@ class GeminiEngine:
             raise ValueError("GEMINI_API_KEY environment variable is required")
         self.client = genai.Client(api_key=GEMINI_API_KEY)
         self.model_name = GEMINI_MODEL
+        # Fallback models exclude the primary (it's tried first by _generate_with_retry)
+        self.fallback_models = [m for m in GEMINI_FALLBACK_MODELS if m != GEMINI_MODEL]
         self.used_topics = self._load_used_topics()
 
     # ── topic tracking ───────────────────────────────────────
@@ -133,7 +162,7 @@ Return ONLY valid JSON — no markdown fences, no extra text:
   "image_queries": ["image search query 1", "image search query 2", "image search query 3", "image search query 4"]
 }}"""
 
-        text = _generate_with_retry(self.client, self.model_name, prompt)
+        text = _generate_with_retry(self.client, self.model_name, prompt, fallback_models=self.fallback_models)
         data = json.loads(_clean_json(text))
 
         self.used_topics.append(data["topic"])
@@ -204,7 +233,7 @@ Example style: "2000 வருடங்களுக்கு முன்னா�
 
 Return ONLY the script text with [SECTION: ...] markers. No other formatting or commentary."""
 
-        script = _generate_with_retry(self.client, self.model_name, prompt)
+        script = _generate_with_retry(self.client, self.model_name, prompt, fallback_models=self.fallback_models)
         script = script.strip()
         word_count = len(script.split())
         logger.info(f"Script generated: {len(script)} chars, ~{word_count} words")
@@ -218,7 +247,7 @@ Current script ({word_count} words):
 {script}
 
 Please EXTEND every section with more details, examples, stories, and explanations. Keep the same structure and [SECTION: ...] markers. Return the COMPLETE extended script."""
-            script2 = _generate_with_retry(self.client, self.model_name, ext_prompt)
+            script2 = _generate_with_retry(self.client, self.model_name, ext_prompt, fallback_models=self.fallback_models)
             script = script2.strip()
             logger.info(f"Extended script: {len(script)} chars, ~{len(script.split())} words")
 
@@ -244,7 +273,7 @@ Return ONLY valid JSON — no markdown fences:
   "thumbnail_text": "2-4 impactful words for thumbnail overlay (Tamil or English)"
 }}"""
 
-        text = _generate_with_retry(self.client, self.model_name, prompt)
+        text = _generate_with_retry(self.client, self.model_name, prompt, fallback_models=self.fallback_models)
         metadata = json.loads(_clean_json(text))
         logger.info(f"Metadata — title: {metadata.get('title', '?')}")
         return metadata
@@ -263,7 +292,7 @@ Return ONLY valid JSON — no markdown fences:
 Return ONLY a JSON array of strings — one query per scene, same order:
 ["query for scene 1", "query for scene 2", ...]"""
 
-        text = _generate_with_retry(self.client, self.model_name, prompt)
+        text = _generate_with_retry(self.client, self.model_name, prompt, fallback_models=self.fallback_models)
         queries = json.loads(_clean_json(text))
         logger.info(f"Generated {len(queries)} image queries")
         return queries

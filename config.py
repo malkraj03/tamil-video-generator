@@ -22,7 +22,15 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
 
 # ── Gemini ───────────────────────────────────────────────────
+# Primary model + fallbacks (tried in order if a model is overloaded/unavailable)
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+GEMINI_FALLBACK_MODELS = [
+    "gemini-3.8-flash",
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    "gemini-1.5-flash",
+    "gemini-flash-latest",
+]
 
 # ── Video ────────────────────────────────────────────────────
 VIDEO_WIDTH = 1920
