@@ -49,6 +49,10 @@ temp/
 
 # Content tracking
 used_content.json
+used_topics.json
+
+# Generated assets
+thumbnails/
 
 # Environment
 .env
