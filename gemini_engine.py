@@ -56,14 +56,20 @@ def _is_retryable(exc: Exception) -> bool:
 
 
 def _generate_with_retry(client, model_name: str, prompt: str,
-                         max_attempts: int = 6, base_delay: float = 5.0,
+                         max_attempts: int = 3, base_delay: float = 15.0,
                          fallback_models=None) -> str:
     """Call generate_content with exponential backoff for transient errors.
+
+    IMPORTANT: Free tier quota is 20 requests/day per model. Each retry counts
+    as a request, so max_attempts is kept low (3) to conserve quota. With 5
+    fallback models × 3 attempts = 15 requests max per call — under the 20/day
+    limit, leaving room for the 4-5 calls needed per video.
 
     If `fallback_models` is provided, each model is tried in order with its own
     retry loop. A model that returns 404 (permanently unavailable) is skipped
     without retries; transient errors (429/5xx) are retried with backoff before
-    moving to the next fallback.
+    moving to the next fallback. A 429 RESOURCE_EXHAUSTED (daily quota hit)
+    skips immediately to the next fallback since retrying won't help.
     """
     models_to_try = [model_name] + (fallback_models or [])
     last_exc = None
@@ -76,14 +82,20 @@ def _generate_with_retry(client, model_name: str, prompt: str,
                 return resp.text
             except Exception as exc:
                 last_exc = exc
-                # 404 = model doesn't exist; skip to next fallback immediately
                 status = getattr(exc, "status", None)
                 try:
                     code = int(status) if status is not None else None
                 except (TypeError, ValueError):
                     code = None
+                # 404 = model doesn't exist; skip to next fallback immediately
                 if code == 404:
                     logger.info(f"Model {mname} not available (404), trying next fallback...")
+                    break
+                # 429 = daily quota exhausted; retrying won't help, skip to next model
+                if code == 429:
+                    logger.warning(
+                        f"Model {mname} quota exhausted (429). Trying next fallback model..."
+                    )
                     break
                 if not _is_retryable(exc) or attempt == max_attempts:
                     if model_idx < len(models_to_try) - 1:
@@ -93,7 +105,7 @@ def _generate_with_retry(client, model_name: str, prompt: str,
                         )
                         break
                     raise
-                delay = base_delay * (2 ** (attempt - 1)) + random.uniform(0, 1.5)
+                delay = base_delay * (2 ** (attempt - 1)) + random.uniform(0, 2.0)
                 logger.warning(
                     f"Gemini transient error on {mname} (attempt {attempt}/{max_attempts}): "
                     f"{exc}. Retrying in {delay:.1f}s..."
