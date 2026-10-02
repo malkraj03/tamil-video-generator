@@ -8,10 +8,12 @@ import json
 import logging
 import random
 import re
+import time
 from datetime import datetime
 from typing import Dict, List
 
 from google import genai
+from google.genai import errors as genai_errors
 
 from config import (
     GEMINI_API_KEY, GEMINI_MODEL, CONTENT_CATEGORIES, USED_TOPICS_FILE
@@ -27,6 +29,50 @@ def _clean_json(text: str) -> str:
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
     return text.strip()
+
+
+# Retryable HTTP status codes from Gemini (transient errors)
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+
+
+def _is_retryable(exc: Exception) -> bool:
+    """Return True for transient Gemini API errors worth retrying."""
+    if isinstance(exc, genai_errors.APIError):
+        # APIError stores .status on the class; ServerError subclasses it
+        status = getattr(exc, "status", None) or getattr(exc, "args", [None])[0]
+        try:
+            code = int(status) if status is not None else None
+        except (TypeError, ValueError):
+            code = None
+        if code in _RETRYABLE_STATUS_CODES:
+            return True
+        # Fall back to message inspection
+        msg = str(exc)
+        if any(s in msg for s in ("429", "500", "502", "503", "504",
+                                  "UNAVAILABLE", "OVERLOADED", "RESOURCE_EXHAUSTED")):
+            return True
+    return False
+
+
+def _generate_with_retry(client, model_name: str, prompt: str,
+                         max_attempts: int = 6, base_delay: float = 5.0) -> str:
+    """Call generate_content with exponential backoff for transient errors."""
+    last_exc = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            resp = client.models.generate_content(model=model_name, contents=prompt)
+            return resp.text
+        except Exception as exc:
+            last_exc = exc
+            if not _is_retryable(exc) or attempt == max_attempts:
+                raise
+            delay = base_delay * (2 ** (attempt - 1)) + random.uniform(0, 1.5)
+            logger.warning(
+                f"Gemini transient error (attempt {attempt}/{max_attempts}): "
+                f"{exc}. Retrying in {delay:.1f}s..."
+            )
+            time.sleep(delay)
+    raise last_exc  # pragma: no cover
 
 
 class GeminiEngine:
@@ -87,8 +133,8 @@ Return ONLY valid JSON — no markdown fences, no extra text:
   "image_queries": ["image search query 1", "image search query 2", "image search query 3", "image search query 4"]
 }}"""
 
-        resp = self.client.models.generate_content(model=self.model_name, contents=prompt)
-        data = json.loads(_clean_json(resp.text))
+        text = _generate_with_retry(self.client, self.model_name, prompt)
+        data = json.loads(_clean_json(text))
 
         self.used_topics.append(data["topic"])
         self._save_used_topics()
@@ -158,8 +204,8 @@ Example style: "2000 வருடங்களுக்கு முன்னா�
 
 Return ONLY the script text with [SECTION: ...] markers. No other formatting or commentary."""
 
-        resp = self.client.models.generate_content(model=self.model_name, contents=prompt)
-        script = resp.text.strip()
+        script = _generate_with_retry(self.client, self.model_name, prompt)
+        script = script.strip()
         word_count = len(script.split())
         logger.info(f"Script generated: {len(script)} chars, ~{word_count} words")
 
@@ -172,8 +218,8 @@ Current script ({word_count} words):
 {script}
 
 Please EXTEND every section with more details, examples, stories, and explanations. Keep the same structure and [SECTION: ...] markers. Return the COMPLETE extended script."""
-            resp2 = self.client.models.generate_content(model=self.model_name, contents=ext_prompt)
-            script = resp2.text.strip()
+            script2 = _generate_with_retry(self.client, self.model_name, ext_prompt)
+            script = script2.strip()
             logger.info(f"Extended script: {len(script)} chars, ~{len(script.split())} words")
 
         return script
@@ -198,8 +244,8 @@ Return ONLY valid JSON — no markdown fences:
   "thumbnail_text": "2-4 impactful words for thumbnail overlay (Tamil or English)"
 }}"""
 
-        resp = self.client.models.generate_content(model=self.model_name, contents=prompt)
-        metadata = json.loads(_clean_json(resp.text))
+        text = _generate_with_retry(self.client, self.model_name, prompt)
+        metadata = json.loads(_clean_json(text))
         logger.info(f"Metadata — title: {metadata.get('title', '?')}")
         return metadata
 
@@ -217,8 +263,8 @@ Return ONLY valid JSON — no markdown fences:
 Return ONLY a JSON array of strings — one query per scene, same order:
 ["query for scene 1", "query for scene 2", ...]"""
 
-        resp = self.client.models.generate_content(model=self.model_name, contents=prompt)
-        queries = json.loads(_clean_json(resp.text))
+        text = _generate_with_retry(self.client, self.model_name, prompt)
+        queries = json.loads(_clean_json(text))
         logger.info(f"Generated {len(queries)} image queries")
         return queries
 
