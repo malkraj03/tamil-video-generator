@@ -11,7 +11,7 @@ import re
 from datetime import datetime
 from typing import Dict, List
 
-import google.generativeai as genai
+from google import genai
 
 from config import (
     GEMINI_API_KEY, GEMINI_MODEL, CONTENT_CATEGORIES, USED_TOPICS_FILE
@@ -35,8 +35,8 @@ class GeminiEngine:
     def __init__(self):
         if not GEMINI_API_KEY:
             raise ValueError("GEMINI_API_KEY environment variable is required")
-        genai.configure(api_key=GEMINI_API_KEY)
-        self.model = genai.GenerativeModel(GEMINI_MODEL)
+        self.client = genai.Client(api_key=GEMINI_API_KEY)
+        self.model_name = GEMINI_MODEL
         self.used_topics = self._load_used_topics()
 
     # ── topic tracking ───────────────────────────────────────
@@ -87,7 +87,7 @@ Return ONLY valid JSON — no markdown fences, no extra text:
   "image_queries": ["image search query 1", "image search query 2", "image search query 3", "image search query 4"]
 }}"""
 
-        resp = self.model.generate_content(prompt)
+        resp = self.client.models.generate_content(model=self.model_name, contents=prompt)
         data = json.loads(_clean_json(resp.text))
 
         self.used_topics.append(data["topic"])
@@ -158,7 +158,7 @@ Example style: "2000 வருடங்களுக்கு முன்னா�
 
 Return ONLY the script text with [SECTION: ...] markers. No other formatting or commentary."""
 
-        resp = self.model.generate_content(prompt)
+        resp = self.client.models.generate_content(model=self.model_name, contents=prompt)
         script = resp.text.strip()
         word_count = len(script.split())
         logger.info(f"Script generated: {len(script)} chars, ~{word_count} words")
@@ -172,7 +172,7 @@ Current script ({word_count} words):
 {script}
 
 Please EXTEND every section with more details, examples, stories, and explanations. Keep the same structure and [SECTION: ...] markers. Return the COMPLETE extended script."""
-            resp2 = self.model.generate_content(ext_prompt)
+            resp2 = self.client.models.generate_content(model=self.model_name, contents=ext_prompt)
             script = resp2.text.strip()
             logger.info(f"Extended script: {len(script)} chars, ~{len(script.split())} words")
 
@@ -198,7 +198,7 @@ Return ONLY valid JSON — no markdown fences:
   "thumbnail_text": "2-4 impactful words for thumbnail overlay (Tamil or English)"
 }}"""
 
-        resp = self.model.generate_content(prompt)
+        resp = self.client.models.generate_content(model=self.model_name, contents=prompt)
         metadata = json.loads(_clean_json(resp.text))
         logger.info(f"Metadata — title: {metadata.get('title', '?')}")
         return metadata
@@ -217,7 +217,7 @@ Return ONLY valid JSON — no markdown fences:
 Return ONLY a JSON array of strings — one query per scene, same order:
 ["query for scene 1", "query for scene 2", ...]"""
 
-        resp = self.model.generate_content(prompt)
+        resp = self.client.models.generate_content(model=self.model_name, contents=prompt)
         queries = json.loads(_clean_json(resp.text))
         logger.info(f"Generated {len(queries)} image queries")
         return queries
